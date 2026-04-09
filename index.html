@@ -6,7 +6,7 @@
   <title>記帳工具 (Google Sheets)</title>
   <link rel="stylesheet" href="./styles.css" />
 
-  <!-- 重要：用 onload 確保 GIS 載入完成後才初始化 -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://accounts.google.com/gsi/client" async defer onload="onGisLoaded()"></script>
 </head>
 
@@ -101,41 +101,31 @@
         </div>
       </div>
 
-      <h3>支出分類統計</h3>
+      <div class="chart-box">
+        <canvas id="categoryChart"></canvas>
+      </div>
+
+      <h3>支出分類細節</h3>
       <div id="categoryBreakdown" class="breakdown"></div>
     </section>
 
     <section class="card full">
       <div class="row space-between center">
-        <h2>本月明細</h2>
+        <h2>本月每日收支趨勢</h2>
         <div class="row gap">
           <button id="btnRefresh" class="btn" disabled>刷新</button>
         </div>
       </div>
-
-      <div class="tableWrap">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>日期</th>
-              <th>類型</th>
-              <th>分類</th>
-              <th class="right">金額</th>
-              <th>說明</th>
-              <th>付款方式</th>
-            </tr>
-          </thead>
-          <tbody id="recordsTbody"></tbody>
-        </table>
+      <div class="daily-chart-container">
+        <canvas id="dailyBarChart"></canvas>
       </div>
     </section>
   </main>
 
   <footer class="container footer muted">
-    <small>Tips：欄位表若未填 Type，會被視為「支出/收入共用選項」。</small>
+    <small>Tips：滑動長條圖可查看每日詳細金額。</small>
   </footer>
 
-  <!-- 放最後，確保 DOM 先就緒 -->
   <script src="./app.js"></script>
 </body>
 </html>

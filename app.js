@@ -1,96 +1,48 @@
 /* =========================
-   你需要填的設定
+   配置與狀態
 ========================= */
 const CONFIG = {
   CLIENT_ID: "562713250943-6ajkqf7jjck39d461phec23eo0setbe3.apps.googleusercontent.com",
   SPREADSHEET_ID: "1XEwbx44Z7hCzgqP1jdep20O6rGrbC7cRGBv2MikNKiI",
-
   SHEET_RECORDS: "記帳紀錄",
   SHEET_FIELDS: "欄位表",
-
   SCOPES: "https://www.googleapis.com/auth/spreadsheets"
 };
 
-/* =========================
-   全域狀態
-========================= */
 let accessToken = "";
 let tokenClient = null;
 let gisReady = false;
 
-let fieldOptions = {
-  typeToCategories: {},
-  typeToPayments: {}
-};
+// 圖表實例儲存
+let catChart = null; 
+let dailyChart = null;
 
+let fieldOptions = { typeToCategories: {}, typeToPayments: {} };
 let currentMonth = "";
 let records = [];
 
-/* =========================
-   DOM
-========================= */
 const $ = (sel) => document.querySelector(sel);
 
-const btnSignIn = $("#btnSignIn");
-const btnSignOut = $("#btnSignOut");
-const btnReload = $("#btnReload");
-const btnRefresh = $("#btnRefresh");
-const btnSubmit = $("#btnSubmit");
-const statusEl = $("#status");
-
-const recordForm = $("#recordForm");
-const fDate = $("#fDate");
-const fType = $("#fType");
-const fCategory = $("#fCategory");
-const fPayment = $("#fPayment");
-const fAmount = $("#fAmount");
-const fDescription = $("#fDescription");
-
-const monthPicker = $("#monthPicker");
-const sumIncome = $("#sumIncome");
-const sumExpense = $("#sumExpense");
-const sumNet = $("#sumNet");
-const categoryBreakdown = $("#categoryBreakdown");
-
-const recordsTbody = $("#recordsTbody");
-
 /* =========================
-   初始化 (DOM 就緒後立即做)
+   初始化
 ========================= */
 initDefaults();
 bindEvents();
-setUiSignedOut();
-setStatus("等待 Google 登入元件載入中...", false);
 
-/* =========================
-   給 index.html 的 GSI onload 呼叫
-   重要：這裡才會初始化 google.accounts
-========================= */
-window.onGisLoaded = function onGisLoaded() {
-  
+window.onGisLoaded = function() {
   gisReady = true;
-
-  if (!window.google || !google.accounts || !google.accounts.oauth2) {
-    setStatus("Google 登入元件載入異常，請確認網路或 CSP 設定", true);
-    return;
-  }
-
   tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: CONFIG.CLIENT_ID,
     scope: CONFIG.SCOPES,
     callback: (resp) => {
-      if (!resp || !resp.access_token) {
-        setStatus("登入失敗，沒有取得 access token", true);
-        return;
+      if (resp.access_token) {
+        accessToken = resp.access_token;
+        afterSignedIn();
       }
-      accessToken = resp.access_token;
-      setStatus("登入成功，已取得授權", false);
-      afterSignedIn();
     }
   });
-
-  btnSignIn.disabled = false;
-  setStatus("已就緒，可以登入 Google", false);
+  $("#btnSignIn").disabled = false;
+  setStatus("已就緒，請登入", false);
 };
 
 function initDefaults() {
@@ -98,372 +50,239 @@ function initDefaults() {
   const yyyy = now.getFullYear();
   const mm = String(now.getMonth() + 1).padStart(2, "0");
   const dd = String(now.getDate()).padStart(2, "0");
-
-  fDate.value = `${yyyy}-${mm}-${dd}`;
+  $("#fDate").value = `${yyyy}-${mm}-${dd}`;
   currentMonth = `${yyyy}-${mm}`;
-  monthPicker.value = currentMonth;
+  $("#monthPicker").value = currentMonth;
 }
 
 function bindEvents() {
-  btnSignIn.addEventListener("click", () => {
-    if (!gisReady || !tokenClient) {
-      setStatus("Google 登入元件尚未就緒，請稍後再試", true);
-      return;
-    }
-    if (!CONFIG.CLIENT_ID || CONFIG.CLIENT_ID.includes("PASTE_")) {
-      setStatus("請先在 app.js 填入 CLIENT_ID", true);
-      return;
-    }
-    tokenClient.requestAccessToken({ prompt: "consent" });
-  });
-
-  btnSignOut.addEventListener("click", () => {
-    if (!accessToken) {
-      setStatus("尚未登入", false);
-      return;
-    }
-
-    if (window.google && google.accounts && google.accounts.oauth2) {
-      google.accounts.oauth2.revoke(accessToken, () => {
-        resetAll();
-        setStatus("已登出", false);
-      });
-    } else {
-      resetAll();
-      setStatus("已登出", false);
-    }
-  });
-
-  fType.addEventListener("change", () => {
-    applySelectOptionsForType(fType.value);
-  });
-
-  monthPicker.addEventListener("change", async () => {
-    currentMonth = monthPicker.value;
-    await reloadMonth();
-  });
-
-  btnReload.addEventListener("click", reloadMonth);
-  btnRefresh.addEventListener("click", reloadMonth);
-
-  recordForm.addEventListener("submit", async (e) => {
+  $("#btnSignIn").addEventListener("click", () => tokenClient.requestAccessToken({ prompt: "consent" }));
+  $("#btnSignOut").addEventListener("click", resetAll);
+  $("#fType").addEventListener("change", () => applySelectOptionsForType($("#fType").value));
+  $("#monthPicker").addEventListener("change", (e) => { currentMonth = e.target.value; reloadMonth(); });
+  $("#btnReload").addEventListener("click", reloadMonth);
+  $("#btnRefresh").addEventListener("click", reloadMonth);
+  $("#recordForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     await submitRecord();
   });
 }
 
-function resetAll() {
-  accessToken = "";
-  records = [];
-  fieldOptions = { typeToCategories: {}, typeToPayments: {} };
-
-  fCategory.innerHTML = "";
-  fPayment.innerHTML = "";
-  recordsTbody.innerHTML = "";
-  renderSummary([]);
-  renderBreakdown([]);
-
-  setUiSignedOut();
-}
-
 /* =========================
-   UI enable/disable
-========================= */
-function setUiSignedIn() {
-  btnSignOut.disabled = false;
-  btnReload.disabled = false;
-  btnRefresh.disabled = false;
-  btnSubmit.disabled = false;
-  monthPicker.disabled = false;
-}
-
-function setUiSignedOut() {
-  btnSignOut.disabled = true;
-  btnReload.disabled = true;
-  btnRefresh.disabled = true;
-  btnSubmit.disabled = true;
-  monthPicker.disabled = true;
-}
-
-/* =========================
-   登入後流程
+   資料核心邏輯
 ========================= */
 async function afterSignedIn() {
-  if (!CONFIG.SPREADSHEET_ID || CONFIG.SPREADSHEET_ID.includes("PASTE_")) {
-    setStatus("請先在 app.js 填入 SPREADSHEET_ID", true);
-    return;
-  }
-
-  try {
-    setUiSignedIn();
-    await loadFieldTable();
-    applySelectOptionsForType(fType.value);
-    await reloadMonth();
-  } catch (err) {
-    console.error(err);
-    setStatus(`初始化失敗: ${err.message || String(err)}`, true);
-  }
+  setUiEnabled(true);
+  await loadFieldTable();
+  applySelectOptionsForType($("#fType").value);
+  await reloadMonth();
 }
 
-/* =========================
-   Google Sheets API helper
-========================= */
-async function apiFetch(url, options = {}) {
-  if (!accessToken) throw new Error("尚未登入或沒有 access token");
-
-  const headers = new Headers(options.headers || {});
-  headers.set("Authorization", `Bearer ${accessToken}`);
-  headers.set("Content-Type", "application/json");
-
-  const res = await fetch(url, { ...options, headers });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`API 錯誤 ${res.status}: ${text || res.statusText}`);
-  }
-  return res.json();
-}
-
-function valuesGetUrl(rangeA1) {
-  const range = encodeURIComponent(rangeA1);
-  return `https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SPREADSHEET_ID}/values/${range}`;
-}
-
-function valuesAppendUrl(rangeA1) {
-  const range = encodeURIComponent(rangeA1);
-  return `https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SPREADSHEET_ID}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
-}
-
-/* =========================
-   讀取 欄位表
-========================= */
-async function loadFieldTable() {
-  setStatus("讀取欄位表中...", false);
-
-  const range = `${CONFIG.SHEET_FIELDS}!A:C`;
-  const data = await apiFetch(valuesGetUrl(range), { method: "GET" });
-  const rows = data.values || [];
-
-  const types = ["支出", "收入"];
-  const typeToCategories = { 支出: new Set(), 收入: new Set() };
-  const typeToPayments = { 支出: new Set(), 收入: new Set() };
-
-  for (let i = 1; i < rows.length; i++) {
-    const [tRaw, cRaw, pRaw] = rows[i];
-    const t = (tRaw || "").trim();
-    const c = (cRaw || "").trim();
-    const p = (pRaw || "").trim();
-
-    const targetTypes = types.includes(t) ? [t] : types;
-
-    if (c) targetTypes.forEach((tt) => typeToCategories[tt].add(c));
-    if (p) targetTypes.forEach((tt) => typeToPayments[tt].add(p));
-  }
-
-  types.forEach((t) => {
-    if (typeToCategories[t].size === 0) typeToCategories[t].add("其他雜項");
-    if (typeToPayments[t].size === 0) typeToPayments[t].add("現金 (Cash)");
-  });
-
-  fieldOptions = { typeToCategories, typeToPayments };
-  setStatus("欄位表已載入", false);
-}
-
-function applySelectOptionsForType(type) {
-  const cats = Array.from(fieldOptions.typeToCategories[type] || []);
-  const pays = Array.from(fieldOptions.typeToPayments[type] || []);
-
-  fCategory.innerHTML = cats.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
-  fPayment.innerHTML = pays.map((p) => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join("");
-}
-
-/* =========================
-   讀取 記帳紀錄 並做每月篩選
-========================= */
 async function reloadMonth() {
-  if (!accessToken) {
-    setStatus("請先登入", true);
-    return;
-  }
-
   try {
-    setStatus("讀取記帳紀錄中...", false);
-    const range = `${CONFIG.SHEET_RECORDS}!A:G`;
-    const data = await apiFetch(valuesGetUrl(range), { method: "GET" });
-    const rows = data.values || [];
+    setStatus("讀取中...", false);
+    const res = await apiFetch(`https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SPREADSHEET_ID}/values/${encodeURIComponent(CONFIG.SHEET_RECORDS + "!A:G")}`);
+    const rows = res.values || [];
+    
+    records = rows.slice(1).map(r => ({
+      Date: (r[1] || "").trim(),
+      Type: (r[2] || "").trim(),
+      Category: (r[3] || "").trim(),
+      Amount: Number(r[4] || 0)
+    })).filter(r => r.Date.startsWith(currentMonth));
 
-    const parsed = [];
-    for (let i = 1; i < rows.length; i++) {
-      const [id, date, type, category, amount, desc, payment] = rows[i];
-      if (!date) continue;
-
-      parsed.push({
-        ID: id || "",
-        Date: (date || "").trim(),
-        Type: (type || "").trim(),
-        Category: (category || "").trim(),
-        Amount: Number(amount || 0),
-        Description: (desc || "").trim(),
-        Payment: (payment || "").trim()
-      });
-    }
-
-    records = filterByMonth(parsed, currentMonth);
-    renderTable(records);
     renderSummary(records);
     renderBreakdown(records);
+    renderCategoryChart(records);
+    renderDailyBarChart(records); // 渲染新的長條圖
 
-    setStatus(`本月共 ${records.length} 筆`, false);
+    setStatus(`本月已載入 ${records.length} 筆資料`, false);
   } catch (err) {
-    console.error(err);
-    setStatus(`讀取失敗: ${err.message || String(err)}`, true);
+    setStatus("讀取失敗", true);
   }
 }
 
-function filterByMonth(items, yyyyMm) {
-  if (!yyyyMm) return items;
-  return items.filter((r) => String(r.Date).startsWith(yyyyMm));
-}
-
-/* =========================
-   新增一筆
-========================= */
 async function submitRecord() {
-  if (!accessToken) {
-    setStatus("請先登入", true);
-    return;
-  }
-
-  const date = fDate.value;
-  const type = fType.value;
-  const category = fCategory.value;
-  const payment = fPayment.value;
-
-  const amountNum = Number(fAmount.value);
-  const desc = fDescription.value.trim();
-
-  if (!date) return setStatus("請選日期", true);
-  if (!["收入", "支出"].includes(type)) return setStatus("Type 只能是 收入 或 支出", true);
-  if (!Number.isFinite(amountNum) || amountNum < 0) return setStatus("Amount 需為非負數", true);
-  if (!desc) return setStatus("請填寫說明", true);
-
-  const id = String(Date.now());
-
-  const row = [id, date, type, category, amountNum, desc, payment];
-
+  const row = [Date.now(), $("#fDate").value, $("#fType").value, $("#fCategory").value, Number($("#fAmount").value), $("#fDescription").value.trim(), $("#fPayment").value];
   try {
-    setStatus("寫入試算表中...", false);
-
-    const appendRange = `${CONFIG.SHEET_RECORDS}!A:G`;
-    await apiFetch(valuesAppendUrl(appendRange), {
+    setStatus("儲存中...", false);
+    await apiFetch(`https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SPREADSHEET_ID}/values/${encodeURIComponent(CONFIG.SHEET_RECORDS + "!A:G")}:append?valueInputOption=USER_ENTERED`, {
       method: "POST",
       body: JSON.stringify({ values: [row] })
     });
-
-    setStatus("新增成功", false);
-
-    fAmount.value = "";
-    fDescription.value = "";
-
+    $("#fAmount").value = "";
+    $("#fDescription").value = "";
     await reloadMonth();
   } catch (err) {
-    console.error(err);
-    setStatus(`新增失敗: ${err.message || String(err)}`, true);
+    setStatus("儲存失敗", true);
   }
 }
 
 /* =========================
-   UI render
+   圖表與渲染
 ========================= */
-function renderTable(items) {
-  const html = items
-    .slice()
-    .sort((a, b) => (a.Date > b.Date ? 1 : -1))
-    .map((r) => {
-      const amt = formatMoney(r.Amount);
-      return `
-        <tr>
-          <td>${escapeHtml(r.Date)}</td>
-          <td>${escapeHtml(r.Type)}</td>
-          <td>${escapeHtml(r.Category)}</td>
-          <td class="right">${escapeHtml(amt)}</td>
-          <td>${escapeHtml(r.Description)}</td>
-          <td>${escapeHtml(r.Payment)}</td>
-        </tr>
-      `;
-    })
-    .join("");
 
-  recordsTbody.innerHTML = html || `<tr><td colspan="6" class="muted">本月尚無資料</td></tr>`;
+// 1. 本月每日趨勢長條圖 (取代原本的明細表格)
+function renderDailyBarChart(items) {
+  const ctx = document.getElementById('dailyBarChart').getContext('2d');
+  
+  // 按日期彙整資料
+  const dailyMap = {};
+  items.forEach(r => {
+    if (!dailyMap[r.Date]) dailyMap[r.Date] = { 收入: 0, 支出: 0 };
+    dailyMap[r.Date][r.Type] += r.Amount;
+  });
+
+  // 排序日期
+  const sortedDates = Object.keys(dailyMap).sort();
+  const incomeData = sortedDates.map(d => dailyMap[d].收入);
+  const expenseData = sortedDates.map(d => dailyMap[d].支出);
+
+  if (dailyChart) dailyChart.destroy();
+
+  dailyChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: sortedDates.map(d => d.split('-')[2] + '日'), // 僅顯示日
+      datasets: [
+        {
+          label: '支出',
+          data: expenseData,
+          backgroundColor: '#ff5d5d',
+          borderRadius: 5,
+        },
+        {
+          label: '收入',
+          data: incomeData,
+          backgroundColor: '#3dd598',
+          borderRadius: 5,
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { stacked: false, grid: { display: false }, ticks: { color: '#a9b6d3' } },
+        y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#a9b6d3' } }
+      },
+      plugins: {
+        legend: { labels: { color: '#e8eefc' } },
+        tooltip: {
+          callbacks: {
+            label: (context) => `${context.dataset.label}: $${context.parsed.y.toLocaleString()}`
+          }
+        }
+      }
+    }
+  });
+}
+
+// 2. 分類圓餅圖
+function renderCategoryChart(items) {
+  const ctx = document.getElementById('categoryChart').getContext('2d');
+  const cats = {};
+  items.filter(r => r.Type === "支出").forEach(r => {
+    cats[r.Category] = (cats[r.Category] || 0) + r.Amount;
+  });
+
+  if (catChart) catChart.destroy();
+  if (Object.keys(cats).length === 0) return;
+
+  catChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: Object.keys(cats),
+      datasets: [{
+        data: Object.values(cats),
+        backgroundColor: ['#4f7cff', '#ff5d5d', '#3dd598', '#ffc542', '#a461ff'],
+        borderWidth: 0
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { position: 'bottom', labels: { color: '#a9b6d3' } } }
+    }
+  });
 }
 
 function renderSummary(items) {
-  let income = 0;
-  let expense = 0;
-
-  for (const r of items) {
-    const amt = Number(r.Amount || 0);
-    if (r.Type === "收入") income += amt;
-    if (r.Type === "支出") expense += amt;
-  }
-
-  sumIncome.textContent = formatMoney(income);
-  sumExpense.textContent = formatMoney(expense);
-  sumNet.textContent = formatMoney(income - expense);
+  let inc = 0, exp = 0;
+  items.forEach(r => r.Type === "收入" ? inc += r.Amount : exp += r.Amount);
+  $("#sumIncome").textContent = inc.toLocaleString();
+  $("#sumExpense").textContent = exp.toLocaleString();
+  $("#sumNet").textContent = (inc - exp).toLocaleString();
 }
 
 function renderBreakdown(items) {
   const map = new Map();
   let total = 0;
-
-  for (const r of items) {
-    if (r.Type !== "支出") continue;
-    const key = r.Category || "未分類";
-    const amt = Number(r.Amount || 0);
-    total += amt;
-    map.set(key, (map.get(key) || 0) + amt);
-  }
-
-  const list = Array.from(map.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 12);
-
-  if (list.length === 0) {
-    categoryBreakdown.innerHTML = `<div class="muted">本月尚無支出</div>`;
-    return;
-  }
-
-  const rows = list.map(([cat, amt]) => {
-    const pct = total > 0 ? Math.round((amt / total) * 100) : 0;
-    return `
-      <div class="barRow">
-        <div>${escapeHtml(cat)}</div>
-        <div class="bar"><div style="width:${pct}%"></div></div>
-        <div class="right">${escapeHtml(formatMoney(amt))} (${pct}%)</div>
-      </div>
-    `;
-  }).join("");
-
-  categoryBreakdown.innerHTML = rows;
+  items.filter(r => r.Type === "支出").forEach(r => {
+    total += r.Amount;
+    map.set(r.Category, (map.get(r.Category) || 0) + r.Amount);
+  });
+  const list = Array.from(map.entries()).sort((a,b) => b[1]-a[1]);
+  $("#categoryBreakdown").innerHTML = list.map(([cat, amt]) => `
+    <div class="barRow">
+      <div>${cat}</div>
+      <div class="bar"><div style="width:${total > 0 ? (amt/total*100) : 0}%"></div></div>
+      <div class="right">$${amt.toLocaleString()}</div>
+    </div>
+  `).join("");
 }
 
 /* =========================
-   Utils
+   其他工具
 ========================= */
-function setStatus(msg, isError) {
-  statusEl.textContent = msg;
-  statusEl.style.color = isError ? "var(--danger)" : "var(--muted)";
+async function apiFetch(url, opt = {}) {
+  const headers = new Headers(opt.headers || {});
+  headers.set("Authorization", `Bearer ${accessToken}`);
+  headers.set("Content-Type", "application/json");
+  const res = await fetch(url, { ...opt, headers });
+  return res.json();
 }
 
-function formatMoney(n) {
-  const num = Number(n || 0);
-  return num.toLocaleString("zh-TW");
+async function loadFieldTable() {
+  const res = await apiFetch(`https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SPREADSHEET_ID}/values/${encodeURIComponent(CONFIG.SHEET_FIELDS + "!A:C")}`);
+  const rows = res.values || [];
+  const types = ["支出", "收入"];
+  const typeToCategories = { 支出: new Set(), 收入: new Set() };
+  const typeToPayments = { 支出: new Set(), 收入: new Set() };
+  rows.slice(1).forEach(r => {
+    const [t, c, p] = r.map(v => (v || "").trim());
+    const targets = types.includes(t) ? [t] : types;
+    if (c) targets.forEach(tt => typeToCategories[tt].add(c));
+    if (p) targets.forEach(tt => typeToPayments[tt].add(p));
+  });
+  fieldOptions = { typeToCategories, typeToPayments };
 }
 
-function escapeHtml(str) {
-  return String(str ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+function applySelectOptionsForType(type) {
+  const cats = Array.from(fieldOptions.typeToCategories[type] || []);
+  const pays = Array.from(fieldOptions.typeToPayments[type] || []);
+  $("#fCategory").innerHTML = cats.map(c => `<option value="${c}">${c}</option>`).join("");
+  $("#fPayment").innerHTML = pays.map(p => `<option value="${p}">${p}</option>`).join("");
+}
+
+function setUiEnabled(enabled) {
+  const btns = ["#btnSignOut", "#btnReload", "#btnRefresh", "#btnSubmit", "#monthPicker"];
+  btns.forEach(s => $(s).disabled = !enabled);
+}
+
+function resetAll() {
+  accessToken = "";
+  if (catChart) catChart.destroy();
+  if (dailyChart) dailyChart.destroy();
+  setUiEnabled(false);
+  setStatus("已登出", false);
+}
+
+function setStatus(msg, err) {
+  $("#status").textContent = msg;
+  $("#status").style.color = err ? "var(--danger)" : "var(--muted)";
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#039;"}[m]));
 }
